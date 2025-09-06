@@ -1,0 +1,30 @@
+RANDOM FOREST SHAPE RECOGNITION MODEL - DETAILED METRICS REPORT
+================================================================================
+
+Train Accuracy: 0.9919
+Test Accuracy: 0.9920
+MAE (curiosity): 0.0249
+MSE (curiosity): 0.0871
+R² (curiosity): 0.9585
+
+CLASSIFICATION REPORT
+----------------------------------------------------------------------
+Class          Precision   Recall      F1-Score    Support   
+----------------------------------------------------------------------
+circle         0.9678      1.0000      0.9836      751.0     
+rectangle      0.9935      1.0000      0.9968      307.0     
+square         1.0000      0.9859      0.9929      778.0     
+star           1.0000      1.0000      1.0000      772.0     
+triangle       1.0000      0.9791      0.9895      767.0     
+----------------------------------------------------------------------
+Weighted Avg   0.9922      0.9920      0.9920      3375.0    
+Macro Avg      0.9923      0.9930      0.9925      3375.0    
+
+CONFUSION MATRIX
+----------------------------------------------------------------------
+               circle    rectangle square    star      triangle  
+circle         751       0         0         0         0         
+rectangle      0         307       0         0         0         
+square         9         2         767       0         0         
+star           0         0         0         772       0         
+triangle       16        0         0         0         751       

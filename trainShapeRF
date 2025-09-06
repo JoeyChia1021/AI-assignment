@@ -1,23 +1,33 @@
 import os
 import cv2
 import numpy as np
+import matplotlib.pyplot as plt
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, accuracy_score
+from sklearn.metrics import (classification_report, accuracy_score, confusion_matrix,
+                             mean_absolute_error, mean_squared_error, r2_score)
 import joblib
 
-# Dataset path 记得换去自己的folder
-DATASET_DIR = r"C:\Users\User\Downloads\shapeData\shapes"
+# ------------------------------
+# Dataset path
+# ------------------------------
+DATASET_DIR = r"shapes"
 
-# Feature extractor
+# ------------------------------
+# Feature extractor (fixed length)
+# ------------------------------
 def extract_features(image_path):
+    """
+    Extract 12 features: 7 Hu moments + aspect_ratio, extent, solidity, circularity, vertices
+    Always returns a fixed-length vector (length=12)
+    """
     img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-    img = cv2.resize(img, (256, 256))  
+    img = cv2.resize(img, (256, 256))
     _, thresh = cv2.threshold(img, 128, 255, cv2.THRESH_BINARY_INV)
 
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
-        return np.zeros(13)  # fallback
+        return np.zeros(12)  # fallback to fixed length
 
     c = max(contours, key=cv2.contourArea)
     area = cv2.contourArea(c)
@@ -27,7 +37,6 @@ def extract_features(image_path):
     hull = cv2.convexHull(c)
     hull_area = cv2.contourArea(hull)
 
-    # Features
     hu_moments = cv2.HuMoments(cv2.moments(c)).flatten()[:7]
     aspect_ratio = w / float(h) if h > 0 else 0
     extent = area / float(rect_area) if rect_area > 0 else 0
@@ -37,38 +46,186 @@ def extract_features(image_path):
 
     return np.hstack([hu_moments, aspect_ratio, extent, solidity, circularity, vertices])
 
-# Load dataset
-X, y = [], []
-classes = os.listdir(DATASET_DIR)
+# ------------------------------
+# Metrics calculation & visualization
+# ------------------------------
+def calculate_and_save_metrics(y_test, y_pred, classes, filename="model_metrics.png"):
+    """
+    Classification metrics + regression-like metrics (curiosity) outside the report
+    """
+    # Classification metrics
+    accuracy = accuracy_score(y_test, y_pred)
+    report = classification_report(y_test, y_pred, output_dict=True)
+    cm = confusion_matrix(y_test, y_pred)
 
+    # Regression-like metrics (numeric mapping)
+    class_to_num = {cls: i for i, cls in enumerate(classes)}
+    y_test_num = np.array([class_to_num[label] for label in y_test])
+    y_pred_num = np.array([class_to_num[label] for label in y_pred])
+    mae = mean_absolute_error(y_test_num, y_pred_num)
+    mse = mean_squared_error(y_test_num, y_pred_num)
+    r2 = r2_score(y_test_num, y_pred_num)
+
+    # ------------------------------
+    # Plotting
+    # ------------------------------
+    fig, axes = plt.subplots(2, 2, figsize=(16, 14))
+    fig.suptitle('Random Forest Shape Recognition Metrics', fontsize=16, fontweight='bold')
+
+    # 1️⃣ Accuracy bar
+    axes[0, 0].bar(['Accuracy'], [accuracy], color='skyblue')
+    axes[0, 0].set_ylim(0, 1.05)
+    axes[0, 0].set_ylabel("Score")
+    axes[0, 0].set_title("Test Accuracy")
+    axes[0, 0].text(0, accuracy + 0.02, f"{accuracy:.4f}", ha='center')
+
+    # 2️⃣ Confusion matrix
+    im = axes[0, 1].imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
+    axes[0, 1].set_title("Confusion Matrix")
+    axes[0, 1].set_xticks(np.arange(len(classes)))
+    axes[0, 1].set_yticks(np.arange(len(classes)))
+    axes[0, 1].set_xticklabels(classes, rotation=45)
+    axes[0, 1].set_yticklabels(classes)
+    for i in range(len(classes)):
+        for j in range(len(classes)):
+            axes[0, 1].text(j, i, cm[i, j], ha='center', va='center', color='red')
+    fig.colorbar(im, ax=axes[0,1])
+
+    # 3️⃣ Precision, Recall, F1 by class
+    metrics_data = np.array([[report[cls]['precision'], report[cls]['recall'], report[cls]['f1-score']] 
+                             for cls in classes])
+    x = np.arange(len(classes))
+    width = 0.25
+    axes[1, 0].bar(x - width, metrics_data[:, 0], width, label='Precision', color='lightcoral')
+    axes[1, 0].bar(x, metrics_data[:, 1], width, label='Recall', color='lightgreen')
+    axes[1, 0].bar(x + width, metrics_data[:, 2], width, label='F1-Score', color='lightblue')
+    axes[1, 0].set_xlabel("Classes")
+    axes[1, 0].set_ylabel("Score")
+    axes[1, 0].set_title("Precision, Recall, F1 by Class")
+    axes[1, 0].set_xticks(x)
+    axes[1, 0].set_xticklabels(classes, rotation=45)
+    axes[1, 0].legend()
+    axes[1, 0].set_ylim(0, 1.05)
+
+    # 4️⃣ Classification report table
+    axes[1, 1].axis('off')
+    headers = ['Class', 'Precision', 'Recall', 'F1-Score', 'Support']
+    table_data = []
+    for cls in classes:
+        table_data.append([
+            cls,
+            f"{report[cls]['precision']:.4f}",
+            f"{report[cls]['recall']:.4f}",
+            f"{report[cls]['f1-score']:.4f}",
+            f"{report[cls]['support']}"
+        ])
+    table_data.append(['Weighted Avg',
+                       f"{report['weighted avg']['precision']:.4f}",
+                       f"{report['weighted avg']['recall']:.4f}",
+                       f"{report['weighted avg']['f1-score']:.4f}",
+                       f"{report['weighted avg']['support']}"])
+    table_data.append(['Macro Avg',
+                       f"{report['macro avg']['precision']:.4f}",
+                       f"{report['macro avg']['recall']:.4f}",
+                       f"{report['macro avg']['f1-score']:.4f}",
+                       f"{report['macro avg']['support']}"])
+    axes[1, 1].table(cellText=table_data, colLabels=headers, cellLoc='center', loc='center')
+    plt.tight_layout()
+    plt.savefig(filename, dpi=300, bbox_inches='tight')
+    plt.close()
+
+    print(f"✅ Metrics visualization saved as {filename}")
+    print(f"✅ Regression-like metrics (curiosity, outside classification report): MAE={mae:.4f}, MSE={mse:.4f}, R²={r2:.4f}")
+
+    return accuracy, mae, mse, r2, report, cm
+
+# ------------------------------
+# Load dataset
+# ------------------------------
+X, y = [], []
+classes = [f for f in os.listdir(DATASET_DIR) if os.path.isdir(os.path.join(DATASET_DIR, f))]
+print("Loading dataset...")
 for label in classes:
     folder = os.path.join(DATASET_DIR, label)
-    if not os.path.isdir(folder):
-        continue
     for file in os.listdir(folder):
         if file.lower().endswith((".jpg", ".png", ".jpeg")):
-            path = os.path.join(folder, file)
-            features = extract_features(path)
-            X.append(features)
+            feat = extract_features(os.path.join(folder, file))
+            X.append(feat)
             y.append(label)
-
 X = np.array(X)
 y = np.array(y)
+print(f"✅ Dataset loaded with {len(X)} samples and {len(classes)} classes: {classes}")
 
+# ------------------------------
 # Train-test split
+# ------------------------------
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-# Random Forest (better parameters)
+# ------------------------------
+# Train Random Forest
+# ------------------------------
+print("Training Random Forest model...")
 clf = RandomForestClassifier(n_estimators=500, max_depth=25, random_state=42)
 clf.fit(X_train, y_train)
+print("✅ Model trained successfully!")
 
-# Evaluate
-y_pred = clf.predict(X_test)
-print("✅ Accuracy:", accuracy_score(y_test, y_pred))
-print(classification_report(y_test, y_pred))
+# ------------------------------
+# Train accuracy
+# ------------------------------
+y_train_pred = clf.predict(X_train)
+train_accuracy = accuracy_score(y_train, y_train_pred)
 
-# Save model + classes
+# ------------------------------
+# Test metrics
+# ------------------------------
+y_test_pred = clf.predict(X_test)
+test_accuracy, mae, mse, r2, report, cm = calculate_and_save_metrics(y_test, y_test_pred, classes)
+
+# ------------------------------
+# Console output
+# ------------------------------
+print(f"✅ Train Accuracy: {train_accuracy:.4f}")
+print(f"✅ Test Accuracy: {test_accuracy:.4f}")
+print(f"MAE: {mae:.4f} (curiosity, not meaningful for classification)")
+print(f"MSE: {mse:.4f} (curiosity, not meaningful for classification)")
+print(f"R²: {r2:.4f} (curiosity, not meaningful for classification)")
+print("\nClassification Report:\n", classification_report(y_test, y_test_pred))
+print("Confusion Matrix:\n", cm)
+
+# ------------------------------
+# Save model & classes
+# ------------------------------
 joblib.dump(clf, "rf_shape_model.pkl")
 joblib.dump(classes, "shape_classes.pkl")
-
 print("✅ Model saved: rf_shape_model.pkl, shape_classes.pkl")
+
+# ------------------------------
+# Save detailed metrics report
+# ------------------------------
+def save_detailed_report(report, train_acc, test_acc, mae, mse, r2, cm, classes, filename="detailed_metrics_report.txt"):
+    with open(filename, 'w', encoding='utf-8') as f:
+        f.write("RANDOM FOREST SHAPE RECOGNITION MODEL - DETAILED METRICS REPORT\n")
+        f.write("="*80 + "\n\n")
+        f.write(f"Train Accuracy: {train_acc:.4f}\n")
+        f.write(f"Test Accuracy: {test_acc:.4f}\n")
+        f.write(f"MAE (curiosity): {mae:.4f}\nMSE (curiosity): {mse:.4f}\nR² (curiosity): {r2:.4f}\n\n")
+
+        f.write("CLASSIFICATION REPORT\n")
+        f.write("-"*70 + "\n")
+        f.write(f"{'Class':<15}{'Precision':<12}{'Recall':<12}{'F1-Score':<12}{'Support':<10}\n")
+        f.write("-"*70 + "\n")
+        for cls in classes:
+            if cls in report and isinstance(report[cls], dict):
+                f.write(f"{cls:<15}{report[cls]['precision']:<12.4f}{report[cls]['recall']:<12.4f}{report[cls]['f1-score']:<12.4f}{report[cls]['support']:<10}\n")
+        f.write("-"*70 + "\n")
+        f.write(f"{'Weighted Avg':<15}{report['weighted avg']['precision']:<12.4f}{report['weighted avg']['recall']:<12.4f}{report['weighted avg']['f1-score']:<12.4f}{report['weighted avg']['support']:<10}\n")
+        f.write(f"{'Macro Avg':<15}{report['macro avg']['precision']:<12.4f}{report['macro avg']['recall']:<12.4f}{report['macro avg']['f1-score']:<12.4f}{report['macro avg']['support']:<10}\n")
+        f.write("\nCONFUSION MATRIX\n")
+        f.write("-"*70 + "\n")
+        f.write(f"{'':<15}" + "".join([f"{cls:<10}" for cls in classes]) + "\n")
+        for i, cls in enumerate(classes):
+            f.write(f"{cls:<15}" + "".join([f"{cm[i][j]:<10}" for j in range(len(classes))]) + "\n")
+    print(f"✅ Detailed report saved as {filename}")
+
+# Save report
+save_detailed_report(report, train_accuracy, test_accuracy, mae, mse, r2, cm, classes)
