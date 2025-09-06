@@ -1,6 +1,20 @@
-how to run
-1. run shape_recognize.py
-2. copy this and paste in terminal
 
-cd knn
-/Users/chloe/Library/Python/3.9/bin/streamlit run shape_recognizer.py
+FOR KNN PART TO RUN
+### 1. Install Dependencies
+```bash
+pip3 install -r requirements.txt
+```
+
+### 2. Run Training Script
+```bash
+python3 train_model.py
+```
+
+### 3. Run Web Interface
+```bash
+python3 -m streamlit run shape_recognizer.py
+```
+
+### 4. Open in Browser
+- Local URL: http://localhost:8501
+- Network URL: http://192.168.1.20:8501

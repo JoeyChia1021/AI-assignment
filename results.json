@@ -1,0 +1,122 @@
+{
+  "accuracy": 1.0,
+  "totalSamples": 150,
+  "correctPredictions": 150,
+  "classes": 5,
+  "confusionMatrix": [
+    [
+      30,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      30,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      30,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      30,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      0,
+      30
+    ]
+  ],
+  "classNames": [
+    "circle",
+    "rectangle",
+    "square",
+    "star",
+    "triangle"
+  ],
+  "classificationReport": [
+    {
+      "class": "circle",
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1score": 1.0,
+      "support": 30
+    },
+    {
+      "class": "rectangle",
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1score": 1.0,
+      "support": 30
+    },
+    {
+      "class": "square",
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1score": 1.0,
+      "support": 30
+    },
+    {
+      "class": "star",
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1score": 1.0,
+      "support": 30
+    },
+    {
+      "class": "triangle",
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1score": 1.0,
+      "support": 30
+    }
+  ],
+  "samplePredictions": [
+    {
+      "shape": "circle",
+      "true": "circle",
+      "pred": "circle",
+      "confidence": 1.0
+    },
+    {
+      "shape": "rectangle",
+      "true": "rectangle",
+      "pred": "rectangle",
+      "confidence": 1.0
+    },
+    {
+      "shape": "square",
+      "true": "square",
+      "pred": "square",
+      "confidence": 1.0
+    },
+    {
+      "shape": "star",
+      "true": "star",
+      "pred": "star",
+      "confidence": 1.0
+    },
+    {
+      "shape": "triangle",
+      "true": "triangle",
+      "pred": "triangle",
+      "confidence": 1.0
+    }
+  ],
+  "trainingTime": 0.00035500526428222656,
+  "trainingSamples": 350,
+  "testSamples": 150
+}

@@ -14,10 +14,10 @@ def load_simple_algorithm():
             algorithm = joblib.load(algorithm_path)
             return algorithm, True
         except Exception as e:
-            st.error(f"Algorithm loading error: {e}")
+            # st.error(f"Algorithm loading error: {e}")
             return None, False
     else:
-        st.error("Simple algorithm not found")
+        # st.error("Simple algorithm not found")
         return None, False
 
 def robust_contour_detection(cv_image):
@@ -314,12 +314,7 @@ def main():
     if 'algorithm' not in st.session_state:
         st.session_state.algorithm, st.session_state.algorithm_loaded = load_simple_algorithm()
     
-    # Simple status
-    if st.session_state.algorithm_loaded:
-        st.success("✅ Algorithm Loaded Successfully")
-    else:
-        st.error("❌ Algorithm Not Loaded")
-    
+   
     # Upload section
     col1, col2 = st.columns([2, 1])
     
