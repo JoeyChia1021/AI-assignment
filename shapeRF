@@ -1,0 +1,201 @@
+import cv2
+import numpy as np
+import joblib
+from tkinter import filedialog, Tk, Canvas, Button, Label
+from PIL import Image, ImageTk
+
+# Load Random Forest model + classes
+clf = joblib.load("rf_shape_model.pkl")
+classes = joblib.load("shape_classes.pkl")
+
+# ------------------- Feature Extraction -------------------
+def extract_features_from_contour(c, gray):
+    area = cv2.contourArea(c)
+    perimeter = cv2.arcLength(c, True)
+    x, y, w, h = cv2.boundingRect(c)
+    rect_area = w * h
+    hull = cv2.convexHull(c)
+    hull_area = cv2.contourArea(hull)
+
+    hu_moments = cv2.HuMoments(cv2.moments(c)).flatten()[:7]
+    aspect_ratio = w / float(h) if h > 0 else 0
+    extent = area / float(rect_area) if rect_area > 0 else 0
+    solidity = area / float(hull_area) if hull_area > 0 else 0
+    circularity = (4 * np.pi * area) / (perimeter * perimeter) if perimeter > 0 else 0
+    vertices = len(cv2.approxPolyDP(c, 0.02 * perimeter, True))
+
+    return np.hstack([hu_moments, aspect_ratio, extent, solidity, circularity, vertices])
+
+# ------------------- Contour-based Detection -------------------
+def detect_shapes_contour(img):
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    detections = []
+
+    for c in contours:
+        area = cv2.contourArea(c)
+        if area < 300:
+            continue
+
+        features = extract_features_from_contour(c, gray)
+        proba = clf.predict_proba([features])[0]
+        idx = np.argmax(proba)
+        shape = clf.classes_[idx]
+        conf = proba[idx] * 100
+
+        if conf < 40:
+            continue
+
+        x, y, w, h = cv2.boundingRect(c)
+        detections.append((x, y, w, h, shape, conf))
+
+    return detections
+
+# ------------------- Watershed-based Detection -------------------
+def detect_shapes_watershed(img):
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+    kernel = np.ones((3, 3), np.uint8)
+    opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=2)
+
+    sure_bg = cv2.dilate(opening, kernel, iterations=3)
+    dist_transform = cv2.distanceTransform(opening, cv2.DIST_L2, 5)
+    _, sure_fg = cv2.threshold(dist_transform, 0.5 * dist_transform.max(), 255, 0)
+
+    sure_fg = np.uint8(sure_fg)
+    unknown = cv2.subtract(sure_bg, sure_fg)
+
+    num_labels, markers = cv2.connectedComponents(sure_fg)
+    markers = markers + 1
+    markers[unknown == 255] = 0
+
+    markers = cv2.watershed(img, markers)
+
+    detections = []
+    for label in np.unique(markers):
+        if label in [0, 1]:
+            continue
+
+        mask = np.zeros(gray.shape, dtype="uint8")
+        mask[markers == label] = 255
+
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for c in contours:
+            area = cv2.contourArea(c)
+            if area < 300:
+                continue
+
+            perimeter = cv2.arcLength(c, True)
+            circularity = (4 * np.pi * area) / (perimeter * perimeter) if perimeter > 0 else 0
+            if circularity < 0.2:
+                continue
+
+            features = extract_features_from_contour(c, gray)
+            proba = clf.predict_proba([features])[0]
+            idx = np.argmax(proba)
+            shape = clf.classes_[idx]
+            conf = proba[idx] * 100
+
+            if conf < 40:
+                continue
+
+            x, y, w, h = cv2.boundingRect(c)
+            detections.append((x, y, w, h, shape, conf))
+
+    return detections
+
+# ------------------- Hybrid Detection -------------------
+def detect_shapes(img):
+    detections = detect_shapes_contour(img)
+
+    # If only 1 detection but large area -> maybe stuck shapes -> try watershed
+    if len(detections) <= 1:
+        detections = detect_shapes_watershed(img)
+
+    return detections
+
+# ------------------- GUI -------------------
+window = Tk()
+window.title("Shape Recognition - Random Forest (Hybrid)")
+window.geometry("800x800")
+window.configure(bg="#e0f7fa")
+
+title_label = Label(window, text="Shape Recognition System (RF + Hybrid Detection)",
+                    font=("Arial", 18, "bold"), bg="#e0f7fa", fg="#00796b")
+title_label.pack(pady=10)
+
+canvas = Canvas(window, width=700, height=600, bg="white", highlightthickness=2, highlightbackground="#004d40")
+canvas.pack(pady=10)
+
+result_label = Label(window, text="", font=("Arial", 14), bg="#e0f7fa", fg="#004d40")
+result_label.pack(pady=10)
+
+# ------------------- Upload & Display -------------------
+def upload_image():
+    file_path = filedialog.askopenfilename(filetypes=[("Image files", "*.jpg *.png *.jpeg")])
+    if not file_path:
+        return
+
+    img = cv2.imread(file_path)
+    detections = detect_shapes(img)
+
+    # Color map for each shape
+    color_map = {
+        "circle": (0, 255, 0),
+        "triangle": (255, 0, 0),
+        "square": (0, 0, 255),
+        "rectangle": (255, 165, 0),
+        "star": (128, 0, 128),
+        "trapezoid": (0, 255, 255),
+        "kite": (255, 20, 147),
+        "parallelogram": (139, 69, 19),
+        "rhombus": (0, 128, 255)
+    }
+
+    for (x, y, w, h, shape, conf) in detections:
+        color = color_map.get(shape.lower(), (0, 255, 0))
+
+        # Draw bounding box (thinner & anti-aliased)
+        cv2.rectangle(img, (x, y), (x + w, y + h), color, 2, lineType=cv2.LINE_AA)
+
+        # Label text
+        label = f"{shape} {conf:.1f}%"
+        (text_w, text_h), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+
+        # Position label above box if possible
+        label_y = y - 8 if y - 8 > text_h else y + h + text_h + 5
+
+        # Small background rectangle with padding
+        cv2.rectangle(img,
+                      (x, label_y - text_h - baseline - 2),
+                      (x + text_w + 4, label_y + baseline + 2),
+                      color, -1)
+
+        # Put white text on top
+        cv2.putText(img, label, (x + 2, label_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255),
+                    1, cv2.LINE_AA)
+
+    # Convert to Tkinter format
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img_pil = Image.fromarray(img_rgb)
+    img_pil = img_pil.resize((700, 600))  # resizing for GUI display
+    img_tk = ImageTk.PhotoImage(img_pil)
+
+    canvas.image = img_tk
+    canvas.create_image(0, 0, anchor="nw", image=img_tk)
+
+    if detections:
+        results = [f"{shape} ({conf:.1f}%)" for (_, _, _, _, shape, conf) in detections]
+        result_label.config(text="Detected: " + ", ".join(results))
+    else:
+        result_label.config(text="No shape detected")
+
+upload_btn = Button(window, text="Upload Image", font=("Arial", 14), bg="#004d40", fg="white",
+                    command=upload_image, relief="raised", bd=3, padx=10, pady=5)
+upload_btn.pack(pady=10)
+
+window.mainloop()

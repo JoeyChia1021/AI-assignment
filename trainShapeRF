@@ -1,0 +1,74 @@
+import os
+import cv2
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, accuracy_score
+import joblib
+
+# Dataset path 记得换去自己的folder
+DATASET_DIR = r"C:\Users\User\Downloads\shapeData\shapes"
+
+# Feature extractor
+def extract_features(image_path):
+    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    img = cv2.resize(img, (256, 256))  
+    _, thresh = cv2.threshold(img, 128, 255, cv2.THRESH_BINARY_INV)
+
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return np.zeros(13)  # fallback
+
+    c = max(contours, key=cv2.contourArea)
+    area = cv2.contourArea(c)
+    perimeter = cv2.arcLength(c, True)
+    x, y, w, h = cv2.boundingRect(c)
+    rect_area = w * h
+    hull = cv2.convexHull(c)
+    hull_area = cv2.contourArea(hull)
+
+    # Features
+    hu_moments = cv2.HuMoments(cv2.moments(c)).flatten()[:7]
+    aspect_ratio = w / float(h) if h > 0 else 0
+    extent = area / float(rect_area) if rect_area > 0 else 0
+    solidity = area / float(hull_area) if hull_area > 0 else 0
+    circularity = (4 * np.pi * area) / (perimeter * perimeter) if perimeter > 0 else 0
+    vertices = len(cv2.approxPolyDP(c, 0.02 * perimeter, True))
+
+    return np.hstack([hu_moments, aspect_ratio, extent, solidity, circularity, vertices])
+
+# Load dataset
+X, y = [], []
+classes = os.listdir(DATASET_DIR)
+
+for label in classes:
+    folder = os.path.join(DATASET_DIR, label)
+    if not os.path.isdir(folder):
+        continue
+    for file in os.listdir(folder):
+        if file.lower().endswith((".jpg", ".png", ".jpeg")):
+            path = os.path.join(folder, file)
+            features = extract_features(path)
+            X.append(features)
+            y.append(label)
+
+X = np.array(X)
+y = np.array(y)
+
+# Train-test split
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Random Forest (better parameters)
+clf = RandomForestClassifier(n_estimators=500, max_depth=25, random_state=42)
+clf.fit(X_train, y_train)
+
+# Evaluate
+y_pred = clf.predict(X_test)
+print("✅ Accuracy:", accuracy_score(y_test, y_pred))
+print(classification_report(y_test, y_pred))
+
+# Save model + classes
+joblib.dump(clf, "rf_shape_model.pkl")
+joblib.dump(classes, "shape_classes.pkl")
+
+print("✅ Model saved: rf_shape_model.pkl, shape_classes.pkl")
