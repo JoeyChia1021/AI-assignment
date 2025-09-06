@@ -6,13 +6,17 @@ import joblib
 from skimage.feature import hog
 from sklearn.svm import SVC
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, mean_absolute_error, mean_squared_error, r2_score
+from sklearn.preprocessing import LabelEncoder
 from PyQt5.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QGridLayout, QPushButton,
-    QLabel, QTextEdit, QFileDialog, QMessageBox, QFrame
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QPushButton,
+    QLabel, QTextEdit, QFileDialog, QMessageBox, QFrame, QDialog
 )
 from PyQt5.QtGui import QPixmap, QFont
 from PyQt5.QtCore import Qt
+import matplotlib.pyplot as plt
+import seaborn as sns
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 # ===============================
 # Feature Extraction
@@ -42,7 +46,7 @@ def extract_features(image, contour=None):
     moments = cv2.moments(image_resized)
     hu_moments = cv2.HuMoments(moments).flatten()
     hu_moments = -np.sign(hu_moments) * np.log10(np.abs(hu_moments) + 1e-7)
-    
+
     if contour is not None:
         area = cv2.contourArea(contour)
         perimeter = cv2.arcLength(contour, True)
@@ -96,10 +100,9 @@ def train_and_save_model(X, y, model_path="shape_model.pkl"):
     clf = SVC(kernel='rbf', C=10, gamma='scale', probability=True)
     clf.fit(X_train, y_train)
     y_pred = clf.predict(X_test)
-    acc = accuracy_score(y_test, y_pred)
     train_time = time.time() - start_time
     joblib.dump(clf, model_path)
-    return clf, acc, train_time
+    return clf, train_time, X_train, X_test, y_train, y_test
 
 # ===============================
 # Segment Shapes
@@ -118,7 +121,7 @@ def segment_shapes(img):
     return shapes
 
 # ===============================
-# GUI Application (UI Improved)
+# GUI Application
 # ===============================
 class ShapeApp(QWidget):
     def __init__(self):
@@ -127,10 +130,13 @@ class ShapeApp(QWidget):
         self.setGeometry(200, 200, 1000, 700)
         self.uploaded_image = None
         self.clf = None
+        self.max_display_width = 600
+        self.max_display_height = 600
+        self.X_dataset = None
+        self.y_dataset = None
         self.init_ui()
 
     def init_ui(self):
-        # Main Grid Layout
         main_layout = QGridLayout()
 
         # Title
@@ -147,7 +153,6 @@ class ShapeApp(QWidget):
         self.upload_btn = QPushButton("📂 Upload Image")
         self.predict_btn = QPushButton("🔍 Predict Shapes")
 
-        # Button style
         for btn in [self.train_btn, self.upload_btn, self.predict_btn]:
             btn.setFont(QFont("Arial", 11))
             btn.setStyleSheet("""
@@ -166,29 +171,30 @@ class ShapeApp(QWidget):
         left_panel.setStyleSheet("background: #ecf0f1; border-right: 2px solid #bdc3c7;")
         main_layout.addWidget(left_panel, 1, 0)
 
-        # ===== Right Panel =====
+        # ===== Right Panel (image left, result right) =====
         right_panel = QFrame()
-        right_layout = QVBoxLayout()
+        right_layout = QHBoxLayout()
 
-        self.accuracy_label = QLabel("⚠️ Model not trained yet")
-        self.accuracy_label.setFont(QFont("Arial", 11))
-        self.accuracy_label.setStyleSheet("color: #e74c3c; margin: 5px;")
-        right_layout.addWidget(self.accuracy_label)
-
+        # Image Label
         self.image_label = QLabel("No image uploaded")
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setStyleSheet("border: 2px dashed #7f8c8d; background: #fafafa;")
-        right_layout.addWidget(self.image_label, stretch=2)
+        right_layout.addWidget(self.image_label, stretch=3)
 
+        # Result Text
+        result_frame = QFrame()
+        result_layout = QVBoxLayout()
+        self.accuracy_label = QLabel("⚠️ Model not trained yet")
+        self.accuracy_label.setFont(QFont("Arial", 11))
+        self.accuracy_label.setStyleSheet("color: #e74c3c; margin: 5px;")
+        result_layout.addWidget(self.accuracy_label)
         self.result_text = QTextEdit()
         self.result_text.setReadOnly(True)
         self.result_text.setFont(QFont("Courier", 10))
-        self.result_text.setStyleSheet("""
-            background: #fdfdfd; 
-            border: 1px solid #bdc3c7; 
-            padding: 5px;
-        """)
-        right_layout.addWidget(self.result_text, stretch=1)
+        self.result_text.setStyleSheet("""background: #fdfdfd; border: 1px solid #bdc3c7; padding: 5px;""")
+        result_layout.addWidget(self.result_text)
+        result_frame.setLayout(result_layout)
+        right_layout.addWidget(result_frame, stretch=2)
 
         right_panel.setLayout(right_layout)
         main_layout.addWidget(right_panel, 1, 1)
@@ -200,26 +206,35 @@ class ShapeApp(QWidget):
         self.upload_btn.clicked.connect(self.upload_image)
         self.predict_btn.clicked.connect(self.predict_image)
 
+    # ======== Train ========
     def train_model(self):
         try:
-            X, y = load_shape_dataset("shapes")
-            if len(X) == 0:
+            self.X_dataset, self.y_dataset = load_shape_dataset("shapes")
+            if len(self.X_dataset) == 0:
                 QMessageBox.warning(self, "Warning", "No dataset found!")
                 return
-            self.clf, acc, train_time = train_and_save_model(X, y)
-            self.accuracy_label.setText(f"✅ Accuracy: {acc:.2%} | ⏱ Training Time: {train_time:.2f}s")
+            self.clf, train_time, X_train, X_test, y_train, y_test = train_and_save_model(self.X_dataset, self.y_dataset)
+            train_acc = self.clf.score(X_train, y_train)
+            test_acc = self.clf.score(X_test, y_test)
+            self.accuracy_label.setText(f"✅ Train: {train_acc:.2%} | Test: {test_acc:.2%} | ⏱ {train_time:.2f}s")
+
+            self.show_model_performance(self.clf, X_train, y_train, X_test, y_test)
+
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
 
+    # ======== Upload ========
     def upload_image(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Open Image", "", "Images (*.png *.jpg *.jpeg *.bmp)"
-        )
+        file_path, _ = QFileDialog.getOpenFileName(self, "Open Image", "", "Images (*.png *.jpg *.jpeg *.bmp)")
         if file_path:
             self.uploaded_image = file_path
-            pixmap = QPixmap(file_path).scaled(600, 400, Qt.KeepAspectRatio)
+            pixmap = QPixmap(file_path)
+            if pixmap.width() > self.max_display_width or pixmap.height() > self.max_display_height:
+                pixmap = pixmap.scaled(self.max_display_width, self.max_display_height, Qt.KeepAspectRatio)
+            self.image_label.setFixedSize(pixmap.width()+50, pixmap.height())
             self.image_label.setPixmap(pixmap)
 
+    # ======== Predict ========
     def predict_image(self):
         if not self.uploaded_image:
             QMessageBox.warning(self, "Warning", "Please upload an image first.")
@@ -230,6 +245,7 @@ class ShapeApp(QWidget):
             except:
                 QMessageBox.warning(self, "Warning", "Train the model first!")
                 return
+
         img = cv2.imread(self.uploaded_image)
         segments = segment_shapes(img)
         if not segments:
@@ -237,28 +253,103 @@ class ShapeApp(QWidget):
             return
 
         output_img = img.copy()
-        results = []
+        detected_shapes = []
+        shape_count = {}
+        detected_confidences = []
+
+        label_offsets = {}
+
         for shape_img, (x, y, w, h), contour in segments:
             feat = extract_features(shape_img, contour)
             probs = self.clf.predict_proba([feat])[0]
             pred_idx = np.argmax(probs)
             pred_label = self.clf.classes_[pred_idx]
             confidence = probs[pred_idx] * 100
-            results.append(f"{pred_label} ({confidence:.1f}%)")
+            detected_shapes.append((pred_label, confidence))
+            detected_confidences.append((pred_label, confidence))
+            shape_count[pred_label] = shape_count.get(pred_label, 0) + 1
 
             cv2.rectangle(output_img, (x, y), (x+w, y+h), (0, 255, 0), 2)
-            # 🔵 Blue label text
-            cv2.putText(output_img, f"{pred_label} ({confidence:.1f}%)", (x, y-5),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+            offset = label_offsets.get(x, 0)
+            text_y = max(y - 5 - offset, 15)
+            label_offsets[x] = offset + 25
+            text = f"{pred_label} ({confidence:.1f}%)"
+            (text_width, text_height), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+            cv2.rectangle(output_img, (x, text_y - text_height - 3), (x + text_width, text_y + 3), (255, 255, 255), -1)
+            cv2.putText(output_img, text, (x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
 
         temp_path = "temp_detected.png"
         cv2.imwrite(temp_path, output_img)
-        pixmap = QPixmap(temp_path).scaled(600, 400, Qt.KeepAspectRatio)
+        pixmap = QPixmap(temp_path)
+        if pixmap.width() > self.max_display_width or pixmap.height() > self.max_display_height:
+            pixmap = pixmap.scaled(self.max_display_width, self.max_display_height, Qt.KeepAspectRatio)
+        self.image_label.setFixedSize(pixmap.width(), pixmap.height()+50)
         self.image_label.setPixmap(pixmap)
-        self.result_text.setText("Detected shapes:\n" + "\n".join(results))
+
+        # Format result text
+        result_msg = "==Detected Shapes with Confidence==\n"
+        for label, conf in detected_shapes:
+            result_msg += f"{label} ({conf:.1f}%)\n"
+        result_msg += "\n===Total shape and the average confidence===\n"
+        for label in shape_count:
+            confidences = [c for l, c in detected_confidences if l == label]
+            avg_conf = np.mean(confidences)
+            result_msg += f"{label}: {shape_count[label]} (avg {avg_conf:.1f}%)\n"
+
+        self.result_text.setText(result_msg)
+
+    # ======== Model Performance Window ========
+    def show_model_performance(self, clf, X_train, y_train, X_test, y_test):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Model Performance & Report")
+        dialog.setGeometry(300, 200, 600, 600)
+        layout = QVBoxLayout()
+        text_edit = QTextEdit()
+        text_edit.setReadOnly(True)
+        text_edit.setFont(QFont("Courier", 10))
+
+        y_pred = clf.predict(X_test)
+        report = classification_report(y_test, y_pred)
+        train_acc = clf.score(X_train, y_train)
+        test_acc = clf.score(X_test, y_test)
+
+        # Regression-like metrics
+        le = LabelEncoder()
+        y_test_enc = le.fit_transform(y_test)
+        y_pred_enc = le.transform(y_pred)
+        mae = mean_absolute_error(y_test_enc, y_pred_enc)
+        mse = mean_squared_error(y_test_enc, y_pred_enc)
+        r2 = r2_score(y_test_enc, y_pred_enc)
+
+        msg = f"✅ Train Accuracy: {train_acc:.2%}\n"
+        msg += f"✅ Test Accuracy: {test_acc:.2%}\n\n"
+        msg += "=== Classification Report ===\n" + report + "\n"
+        msg += f"MAE: {mae:.4f}, MSE: {mse:.4f}, R²: {r2:.4f}"
+        text_edit.setText(msg)
+        layout.addWidget(text_edit)
+        dialog.setLayout(layout)
+        dialog.exec_()
+
+        # Confusion matrix heatmap
+        self.show_confusion_matrix_dialog(y_test, y_pred, clf.classes_)
+
+    def show_confusion_matrix_dialog(self, y_true, y_pred, classes):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Confusion Matrix")
+        dialog.setGeometry(350, 250, 500, 400)
+        layout = QVBoxLayout()
+        fig, ax = plt.subplots(figsize=(5,4))
+        cm = confusion_matrix(y_true, y_pred, labels=classes)
+        sns.heatmap(cm, annot=True, fmt='d', xticklabels=classes, yticklabels=classes, cmap="Blues", ax=ax)
+        ax.set_xlabel("Predicted")
+        ax.set_ylabel("Actual")
+        canvas = FigureCanvas(fig)
+        layout.addWidget(canvas)
+        dialog.setLayout(layout)
+        dialog.exec_()
 
 # ===============================
-# Run
+# Run Application
 # ===============================
 if __name__ == "__main__":
     app = QApplication([])
