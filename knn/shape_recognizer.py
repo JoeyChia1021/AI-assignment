@@ -5,7 +5,7 @@ from PIL import Image, ImageDraw, ImageFont
 import joblib
 import os
 
-# Load simple KNN model
+# Load KNN model with label encoder
 @st.cache_data
 def load_simple_algorithm():
     algorithm_path = "trained_algorithm.pkl"
@@ -123,26 +123,33 @@ def geometric_classification(contour, w, h):
     except Exception as e:
         return "unknown", 0.0
 
-def predict_with_simple_knn(roi):
-    """Simple KNN prediction"""
+def predict_with_knn(roi):
+    """KNN prediction using the trained model"""
     try:
         # Convert to grayscale
         roi_gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
         
-        # Apply threshold + inversion
+        # Apply threshold + inversion (same as training)
         _, roi_thresh = cv2.threshold(roi_gray, 127, 255, cv2.THRESH_BINARY_INV)
         
-        # Resize to 28x28
-        roi_resized = cv2.resize(roi_thresh, (28, 28), interpolation=cv2.INTER_AREA)
+        # Resize to 20x20 (same as training)
+        roi_resized = cv2.resize(roi_thresh, (20, 20), interpolation=cv2.INTER_AREA)
         
         # Flatten and normalize
         roi_flat = roi_resized.flatten().astype(np.float32) / 255.0
         
-        # Use simple KNN for prediction
+        # Use KNN for prediction
         if 'algorithm' in st.session_state and st.session_state.algorithm_loaded:
-            pred = st.session_state.algorithm.predict([roi_flat])[0]
+            # The model expects encoded labels, but we need to decode them
+            pred_encoded = st.session_state.algorithm.predict([roi_flat])[0]
             proba = st.session_state.algorithm.predict_proba([roi_flat])[0]
             conf = np.max(proba)
+            
+            # Decode the prediction back to string
+            # The model was trained with encoded labels, so we need to decode
+            shape_mapping = {0: 'circle', 1: 'rectangle', 2: 'square', 3: 'star', 4: 'triangle'}
+            pred = shape_mapping.get(pred_encoded, 'unknown')
+            
             return pred, conf
         else:
             return "unknown", 0.0
@@ -150,37 +157,33 @@ def predict_with_simple_knn(roi):
         return "unknown", 0.0
 
 def hybrid_classification(contour, roi, w, h):
-    """Hybrid classification with more permissive logic"""
+    """Hybrid classification - prioritize KNN over geometric"""
     try:
-        # Get geometric prediction
+        # Get KNN prediction first (more accurate)
+        knn_pred, knn_conf = predict_with_knn(roi)
+        
+        # Get geometric prediction as backup
         geo_pred, geo_conf = geometric_classification(contour, w, h)
         
-        # Get KNN prediction
-        knn_pred, knn_conf = predict_with_simple_knn(roi)
-        
-        # More permissive decision logic
-        if geo_conf > 0.6:  # Lower threshold
-            if geo_pred == knn_pred:
-                final_pred = geo_pred
-                final_conf = min(geo_conf + 0.1, 1.0)
-                method = "geometric_knn_agreement"
-            else:
-                final_pred = geo_pred
-                final_conf = geo_conf
-                method = "geometric_override"
-        elif knn_conf > 0.4:  # Lower threshold
+        # Prioritize KNN if it has reasonable confidence
+        if knn_conf > 0.3:  # Lower threshold for KNN
             final_pred = knn_pred
             final_conf = knn_conf
-            method = "knn_fallback"
+            method = "knn_primary"
+        elif geo_conf > 0.6:  # Use geometric if KNN is uncertain
+            final_pred = geo_pred
+            final_conf = geo_conf
+            method = "geometric_fallback"
         else:
-            if geo_conf > knn_conf:
-                final_pred = geo_pred
-                final_conf = geo_conf
-                method = "geometric_low_conf"
-            else:
+            # Use whichever has higher confidence
+            if knn_conf > geo_conf:
                 final_pred = knn_pred
                 final_conf = knn_conf
                 method = "knn_low_conf"
+            else:
+                final_pred = geo_pred
+                final_conf = geo_conf
+                method = "geometric_low_conf"
         
         return final_pred, final_conf, method
         
@@ -188,7 +191,7 @@ def hybrid_classification(contour, roi, w, h):
         return "unknown", 0.0, "error"
 
 def detect_shapes_robust(image):
-    """Robust shape detection with multiple methods"""
+    """Robust shape detection with KNN priority"""
     try:
         # Convert PIL to OpenCV format
         cv_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
@@ -198,111 +201,102 @@ def detect_shapes_robust(image):
         
         detections = []
         
-        for i, contour in enumerate(contours):
-            area = cv2.contourArea(contour)
-            x, y, w, h = cv2.boundingRect(contour)
-            
-            # More permissive size filtering
-            if w > 20 and h > 20:  # Lower size threshold
-                # Step 2: Crop bounding box
+        for contour in contours:
+            try:
+                # Get bounding box
+                x, y, w, h = cv2.boundingRect(contour)
+                
+                # Extract ROI
                 roi = cv_image[y:y+h, x:x+w]
                 
-                # Step 3: Hybrid classification
-                prediction, confidence, method = hybrid_classification(contour, roi, w, h)
+                if roi.size == 0:
+                    continue
                 
-                # Very permissive confidence threshold
-                if confidence > 0.2:  # Very low threshold
+                # Use hybrid classification (KNN priority)
+                pred, conf, method = hybrid_classification(contour, roi, w, h)
+                
+                if pred != "unknown" and conf > 0.3:
                     detections.append({
-                        'shape': prediction,
-                        'confidence': confidence,
-                        'position': (x + w//2, y + h//2),
-                        'bbox': (x, y, x+w, y+h),
-                        'method': method,
-                        'area': area
+                        'bbox': (x, y, w, h),
+                        'prediction': pred,
+                        'confidence': conf,
+                        'method': method
                     })
+                    
+            except Exception as e:
+                st.error(f"Detection error: {e}")
+                continue
         
         return detections
         
     except Exception as e:
-        st.error(f"Detection error: {e}")
+        st.error(f"Error processing image: {e}")
         return []
 
-def draw_detection_results(image, detections):
-    """Draw results on image"""
-    detected_img = image.copy()
-    draw = ImageDraw.Draw(detected_img)
-    
-    # Colors for shapes
-    colors = {
-        'circle': 'green',
-        'square': 'orange', 
-        'triangle': 'blue',
-        'star': 'red',
-        'rectangle': 'purple',
-        'unknown': 'gray'
-    }
-    
-    for detection in detections:
-        x1, y1, x2, y2 = detection['bbox']
-        shape = detection['shape']
-        confidence = detection['confidence']
+def draw_detections(image, detections):
+    """Draw detection results on image"""
+    try:
+        # Convert to PIL for drawing
+        pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+        draw = ImageDraw.Draw(pil_image)
         
-        # Get color
-        color = colors.get(shape, 'gray')
+        # Colors for different shapes
+        colors = {
+            'circle': (255, 165, 0),    # Orange
+            'square': (0, 255, 0),      # Green
+            'rectangle': (0, 0, 255),   # Blue
+            'triangle': (255, 0, 255),  # Magenta
+            'star': (255, 255, 0)       # Yellow
+        }
         
-        # Draw bounding box
-        draw.rectangle([x1, y1, x2, y2], outline=color, width=3)
+        for detection in detections:
+            x, y, w, h = detection['bbox']
+            pred = detection['prediction']
+            conf = detection['confidence']
+            method = detection['method']
+            
+            # Get color
+            color = colors.get(pred, (128, 128, 128))
+            
+            # Draw bounding box
+            draw.rectangle([x, y, x+w, y+h], outline=color, width=3)
+            
+            # Draw label
+            label = f"{pred} ({conf:.0%})"
+            try:
+                # Try to use a font
+                font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 16)
+            except:
+                font = ImageFont.load_default()
+            
+            # Draw text background
+            text_bbox = draw.textbbox((x, y-25), label, font=font)
+            draw.rectangle(text_bbox, fill=color)
+            draw.text((x, y-25), label, fill=(255, 255, 255), font=font)
         
-        # Draw label
-        label_text = f"{shape} ({int(confidence*100)}%)"
+        return pil_image
         
-        try:
-            font = ImageFont.truetype("Arial.ttf", 16)
-        except:
-            font = ImageFont.load_default()
-        
-        # Get text size
-        bbox = draw.textbbox((0, 0), label_text, font=font)
-        text_width = bbox[2] - bbox[0]
-        text_height = bbox[3] - bbox[1]
-        
-        # Draw label background
-        label_x = x1
-        label_y = max(0, y1 - text_height - 5)
-        draw.rectangle([label_x, label_y, label_x + text_width + 10, label_y + text_height + 5], 
-                      fill=color, outline=color)
-        
-        # Draw label text
-        draw.text((label_x + 5, label_y + 2), label_text, fill="white", font=font)
-    
-    return detected_img
+    except Exception as e:
+        st.error(f"Error drawing detections: {e}")
+        return Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
 
+# Streamlit app
 def main():
-    st.set_page_config(page_title="Shape Recognition", layout="wide")
-    
     # Custom CSS
     st.markdown("""
     <style>
     .main-header {
-        text-align: center;
-        font-size: 2rem;
+        font-size: 3rem;
         font-weight: bold;
+        text-align: center;
+        color: #1f77b4;
         margin-bottom: 2rem;
-        color: #2c3e50;
     }
-    .panel {
-        flex: 1;
-        background: white;
-        border: 2px solid #ddd;
-        border-radius: 8px;
-        padding: 1rem;
-        text-align: center;
-    }
-    .panel-title {
-        font-size: 1.2rem;
-        font-weight: bold;
-        margin-bottom: 1rem;
-        color: #34495e;
+    .upload-section {
+        background-color: #f0f2f6;
+        padding: 2rem;
+        border-radius: 10px;
+        margin-bottom: 2rem;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -310,11 +304,10 @@ def main():
     # Header
     st.markdown('<div class="main-header">🎯 Shape Recognition System</div>', unsafe_allow_html=True)
     
-    # Load simple algorithm
+    # Load KNN algorithm
     if 'algorithm' not in st.session_state:
         st.session_state.algorithm, st.session_state.algorithm_loaded = load_simple_algorithm()
     
-   
     # Upload section
     col1, col2 = st.columns([2, 1])
     
@@ -324,65 +317,47 @@ def main():
     with col2:
         detect_button = st.button("🎯 Detect Shapes", type="primary", use_container_width=True)
     
-    # Main panels
-    if uploaded_file is not None:
+    # Process uploaded image
+    if uploaded_file is not None and detect_button:
         try:
             # Load image
             image = Image.open(uploaded_file)
             
-            # Create two columns for the panels
-            col1, col2 = st.columns(2)
+            # Convert to RGB if needed
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
             
-            with col1:
-                st.markdown('<div class="panel">', unsafe_allow_html=True)
-                st.markdown('<div class="panel-title">Original Image</div>', unsafe_allow_html=True)
-                st.image(image, width='stretch')
-                st.markdown('</div>', unsafe_allow_html=True)
+            # Detect shapes
+            detections = detect_shapes_robust(image)
             
-            with col2:
-                st.markdown('<div class="panel">', unsafe_allow_html=True)
-                st.markdown('<div class="panel-title">Detected Shapes</div>', unsafe_allow_html=True)
+            if detections:
+                # Convert to OpenCV format for drawing
+                cv_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
                 
-                if detect_button:
-                    with st.spinner("Processing..."):
-                        detections = detect_shapes_robust(image)
-                    
-                    if detections:
-                        # Draw detection results
-                        detected_img = draw_detection_results(image, detections)
-                        st.image(detected_img, width='stretch')
-                        
-                        # Show results summary
-                        st.success(f"✅ Detected {len(detections)} shapes")
-                        
-                        for i, detection in enumerate(detections, 1):
-                            st.write(f"**{i}.** {detection['shape'].upper()} - {detection['confidence']*100:.1f}% confidence")
-                    else:
-                        st.warning("❌ No shapes detected")
-                        st.image(image, width='stretch')
-                else:
-                    st.info("Click 'Detect Shapes' to see results")
-                    st.image(image, width='stretch')
+                # Draw detections
+                result_image = draw_detections(cv_image, detections)
                 
-                st.markdown('</div>', unsafe_allow_html=True)
+                # Display results
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.subheader("Original Image")
+                    st.image(image, use_column_width=True)
+                
+                with col2:
+                    st.subheader("Detected Shapes")
+                    st.image(result_image, use_column_width=True)
+                
+                # Show detection details
+                st.subheader("Detection Details")
+                for i, detection in enumerate(detections):
+                    st.write(f"**Shape {i+1}**: {detection['prediction']} (Confidence: {detection['confidence']:.1%}, Method: {detection['method']})")
+            else:
+                st.warning("No shapes detected in the image.")
+                st.image(image, use_column_width=True)
                 
         except Exception as e:
             st.error(f"Error processing image: {e}")
-    else:
-        # Show placeholder panels
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown('<div class="panel">', unsafe_allow_html=True)
-            st.markdown('<div class="panel-title">Original Image</div>', unsafe_allow_html=True)
-            st.info("Upload an image to get started")
-            st.markdown('</div>', unsafe_allow_html=True)
-        
-        with col2:
-            st.markdown('<div class="panel">', unsafe_allow_html=True)
-            st.markdown('<div class="panel-title">Detected Shapes</div>', unsafe_allow_html=True)
-            st.info("Upload an image to see detection results")
-            st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()

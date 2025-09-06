@@ -256,7 +256,7 @@ class ShapeClassifier:
         
         return accuracy_score(y_test, y_test_pred)
     
-    def save_model(self, model_path="shape_knn_model.pkl"):
+    def save_model(self, model_path="trained_algorithm.pkl"):
         """Save the trained model"""
         if self.knn is None:
             print("No model to save. Train the model first.")
