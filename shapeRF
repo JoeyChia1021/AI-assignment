@@ -1,12 +1,28 @@
 import cv2
 import numpy as np
 import joblib
-from tkinter import filedialog, Tk, Canvas, Button, Label
+from tkinter import filedialog, Tk, Canvas, Button, Label, Frame, Scrollbar
 from PIL import Image, ImageTk
 
 # Load Random Forest model + classes
 clf = joblib.load("rf_shape_model.pkl")
 classes = joblib.load("shape_classes.pkl")
+
+# ------------------- Preprocessing Function -------------------
+def preprocess_image(img, target_size=800):
+    height, width = img.shape[:2]
+    
+    if width > height:
+        scale_factor = target_size / width
+    else:
+        scale_factor = target_size / height
+        
+    new_width = int(width * scale_factor)
+    new_height = int(height * scale_factor)
+    
+    resized_img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_AREA)
+    
+    return resized_img, scale_factor
 
 # ------------------- Feature Extraction -------------------
 def extract_features_from_contour(c, gray):
@@ -111,7 +127,6 @@ def detect_shapes_watershed(img):
 def detect_shapes(img):
     detections = detect_shapes_contour(img)
 
-    # If only 1 detection but large area -> maybe stuck shapes -> try watershed
     if len(detections) <= 1:
         detections = detect_shapes_watershed(img)
 
@@ -119,19 +134,119 @@ def detect_shapes(img):
 
 # ------------------- GUI -------------------
 window = Tk()
-window.title("Shape Recognition - Random Forest (Hybrid)")
-window.geometry("800x800")
-window.configure(bg="#e0f7fa")
+window.title("Shape Recognition")
+window.geometry("1200x800")
+window.configure(bg="#f5f7fa")
 
-title_label = Label(window, text="Shape Recognition System (RF + Hybrid Detection)",
-                    font=("Arial", 18, "bold"), bg="#e0f7fa", fg="#00796b")
-title_label.pack(pady=10)
+# Header
+header_frame = Frame(window, bg="#4a6fa5", height=80)
+header_frame.pack(fill="x")
+header_frame.pack_propagate(False)
 
-canvas = Canvas(window, width=700, height=600, bg="white", highlightthickness=2, highlightbackground="#004d40")
-canvas.pack(pady=10)
+title = Label(header_frame, text="Shape Recognition - Before & After Comparison", 
+              font=("Arial", 20, "bold"), bg="#4a6fa5", fg="white")
+title.pack(expand=True)
 
-result_label = Label(window, text="", font=("Arial", 14), bg="#e0f7fa", fg="#004d40")
-result_label.pack(pady=10)
+# Main content
+main_frame = Frame(window, bg="#f5f7fa")
+main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+
+# Image comparison frame
+comparison_frame = Frame(main_frame, bg="#f5f7fa")
+comparison_frame.pack(fill="both", expand=True, pady=(0, 20))
+
+# Before image frame
+before_frame = Frame(comparison_frame, bg="white", relief="flat", highlightthickness=1, highlightbackground="#ddd")
+before_frame.pack(side="left", fill="both", expand=True, padx=(0, 10))
+
+before_label = Label(before_frame, text="Original Image", font=("Arial", 12, "bold"), 
+                    bg="white", fg="#333")
+before_label.pack(pady=(10, 5))
+
+before_canvas = Canvas(before_frame, bg="white", highlightthickness=0)
+before_canvas.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
+# After image frame
+after_frame = Frame(comparison_frame, bg="white", relief="flat", highlightthickness=1, highlightbackground="#ddd")
+after_frame.pack(side="right", fill="both", expand=True, padx=(10, 0))
+
+after_label = Label(after_frame, text="Processed Image", font=("Arial", 12, "bold"), 
+                   bg="white", fg="#333")
+after_label.pack(pady=(10, 5))
+
+after_canvas = Canvas(after_frame, bg="white", highlightthickness=0)
+after_canvas.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
+# Bottom panel - Results and controls
+bottom_frame = Frame(main_frame, bg="#f5f7fa")
+bottom_frame.pack(fill="x")
+
+# Results panel
+results_frame = Frame(bottom_frame, bg="#f5f7fa")
+results_frame.pack(side="left", fill="both", expand=True, padx=(0, 20))
+
+results_header = Frame(results_frame, bg="#4a6fa5", height=40)
+results_header.pack(fill="x")
+results_header.pack_propagate(False)
+
+Label(results_header, text="Detection Results", font=("Arial", 12, "bold"), 
+      bg="#4a6fa5", fg="white").pack(expand=True)
+
+results_content = Frame(results_frame, bg="white", relief="flat", highlightthickness=1, highlightbackground="#ddd")
+results_content.pack(fill="both", expand=True)
+
+# Create a scrollable frame for results
+results_canvas = Canvas(results_content, bg="white", highlightthickness=0)
+scrollbar = Scrollbar(results_content, orient="vertical", command=results_canvas.yview)
+scrollable_frame = Frame(results_canvas, bg="white")
+
+scrollable_frame.bind(
+    "<Configure>",
+    lambda e: results_canvas.configure(scrollregion=results_canvas.bbox("all"))
+)
+
+results_canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+results_canvas.configure(yscrollcommand=scrollbar.set)
+
+results_canvas.pack(side="left", fill="both", expand=True, padx=1, pady=1)
+scrollbar.pack(side="right", fill="y", pady=1)
+
+# Controls panel
+controls_frame = Frame(bottom_frame, bg="#f5f7fa", width=200)
+controls_frame.pack(side="right", fill="y")
+controls_frame.pack_propagate(False)
+
+# Stats frame
+stats_frame = Frame(controls_frame, bg="white", relief="flat", highlightthickness=1, highlightbackground="#ddd")
+stats_frame.pack(fill="x", pady=(0, 15))
+
+Label(stats_frame, text="Detection Statistics", font=("Arial", 12, "bold"), 
+      bg="white", fg="#333").pack(anchor="w", padx=10, pady=(10, 5))
+
+stats_content = Frame(stats_frame, bg="white")
+stats_content.pack(fill="x", padx=10, pady=(0, 10))
+
+total_shapes_label = Label(stats_content, text="Total Shapes: 0", font=("Arial", 10), 
+                          bg="white", fg="#555", anchor="w")
+total_shapes_label.pack(fill="x")
+
+avg_confidence_label = Label(stats_content, text="Average Confidence: 0%", font=("Arial", 10), 
+                            bg="white", fg="#555", anchor="w")
+avg_confidence_label.pack(fill="x")
+
+# Buttons
+button_frame = Frame(controls_frame, bg="white", relief="flat", highlightthickness=1, highlightbackground="#ddd")
+button_frame.pack(fill="x")
+
+upload_btn = Button(button_frame, text="Upload Image", font=("Arial", 12), 
+                    bg="#4a6fa5", fg="white", command=lambda: upload_image(), 
+                    relief="flat", padx=20, pady=10, cursor="hand2")
+upload_btn.pack(fill="x", padx=10, pady=10)
+
+clear_btn = Button(button_frame, text="Clear", font=("Arial", 12), 
+                   bg="#6c757d", fg="white", command=lambda: clear_canvas(), 
+                   relief="flat", padx=20, pady=10, cursor="hand2")
+clear_btn.pack(fill="x", padx=10, pady=(0, 10))
 
 # ------------------- Upload & Display -------------------
 def upload_image():
@@ -139,63 +254,164 @@ def upload_image():
     if not file_path:
         return
 
+    # Read and display original image
     img = cv2.imread(file_path)
-    detections = detect_shapes(img)
+    if img is None:
+        update_results("Error: Could not load image")
+        return
+        
+    original_height, original_width = img.shape[:2]
+    
+    # Display original image
+    img_rgb_original = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img_pil_original = Image.fromarray(img_rgb_original)
+    
+    display_width = 450
+    display_height = int(original_height * (display_width / original_width))
+    if display_height > 350:
+        display_height = 350
+        display_width = int(original_width * (display_height / original_height))
+    
+    img_pil_original = img_pil_original.resize((display_width, display_height), Image.Resampling.LANCZOS)
+    img_tk_original = ImageTk.PhotoImage(img_pil_original)
 
-    # Color map for each shape
+    before_canvas.image = img_tk_original
+    before_canvas.delete("all")
+    before_canvas.create_image(0, 0, anchor="nw", image=img_tk_original)
+    
+    # Process image for shape detection
+    processed_img, scale_factor = preprocess_image(img, target_size=800)
+    detections = detect_shapes(processed_img)
+    
     color_map = {
-        "circle": (0, 255, 0),
-        "triangle": (255, 0, 0),
-        "square": (0, 0, 255),
-        "rectangle": (255, 165, 0),
-        "star": (128, 0, 128),
-        "trapezoid": (0, 255, 255),
-        "kite": (255, 20, 147),
-        "parallelogram": (139, 69, 19),
-        "rhombus": (0, 128, 255)
+        "circle": (70, 130, 180),      # Steel blue
+        "triangle": (220, 100, 80),    # Coral
+        "square": (80, 160, 100),      # Sage green
+        "rectangle": (240, 180, 60),   # Gold
+        "star": (150, 100, 200),       # Purple
+        "trapezoid": (60, 170, 170),   # Teal
+        "kite": (230, 150, 100),       # Peach
+        "parallelogram": (130, 130, 130),  # Gray
+        "rhombus": (200, 80, 90)       # Dark pink
     }
 
+    # Draw detections on the image
     for (x, y, w, h, shape, conf) in detections:
-        color = color_map.get(shape.lower(), (0, 255, 0))
+        x_orig = int(x / scale_factor)
+        y_orig = int(y / scale_factor)
+        w_orig = int(w / scale_factor)
+        h_orig = int(h / scale_factor)
+        
+        color = color_map.get(shape.lower(), (70, 130, 180))
 
-        # Draw bounding box (thinner & anti-aliased)
-        cv2.rectangle(img, (x, y), (x + w, y + h), color, 2, lineType=cv2.LINE_AA)
+        cv2.rectangle(img, (x_orig, y_orig), (x_orig + w_orig, y_orig + h_orig), color, 2, lineType=cv2.LINE_AA)
 
-        # Label text
-        label = f"{shape} {conf:.1f}%"
-        (text_w, text_h), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        label = f"{shape.capitalize()} {conf:.1f}%"
+        (text_w, text_h), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
 
-        # Position label above box if possible
-        label_y = y - 8 if y - 8 > text_h else y + h + text_h + 5
+        label_y = y_orig - 10 if y_orig - 10 > text_h else y_orig + h_orig + text_h + 5
 
-        # Small background rectangle with padding
         cv2.rectangle(img,
-                      (x, label_y - text_h - baseline - 2),
-                      (x + text_w + 4, label_y + baseline + 2),
+                      (x_orig, label_y - text_h - baseline - 3),
+                      (x_orig + text_w + 6, label_y + baseline + 3),
                       color, -1)
 
-        # Put white text on top
-        cv2.putText(img, label, (x + 2, label_y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255),
-                    1, cv2.LINE_AA)
+        cv2.putText(img, label, (x_orig + 3, label_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255),
+                    2, cv2.LINE_AA)
 
-    # Convert to Tkinter format
-    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    img_pil = Image.fromarray(img_rgb)
-    img_pil = img_pil.resize((700, 600))  # resizing for GUI display
-    img_tk = ImageTk.PhotoImage(img_pil)
+    # Display processed image
+    img_rgb_processed = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img_pil_processed = Image.fromarray(img_rgb_processed)
+    
+    img_pil_processed = img_pil_processed.resize((display_width, display_height), Image.Resampling.LANCZOS)
+    img_tk_processed = ImageTk.PhotoImage(img_pil_processed)
 
-    canvas.image = img_tk
-    canvas.create_image(0, 0, anchor="nw", image=img_tk)
+    after_canvas.image = img_tk_processed
+    after_canvas.delete("all")
+    after_canvas.create_image(0, 0, anchor="nw", image=img_tk_processed)
 
-    if detections:
-        results = [f"{shape} ({conf:.1f}%)" for (_, _, _, _, shape, conf) in detections]
-        result_label.config(text="Detected: " + ", ".join(results))
-    else:
-        result_label.config(text="No shape detected")
+    update_results(detections)
 
-upload_btn = Button(window, text="Upload Image", font=("Arial", 14), bg="#004d40", fg="white",
-                    command=upload_image, relief="raised", bd=3, padx=10, pady=5)
-upload_btn.pack(pady=10)
+def update_results(detections):
+    # Clear previous results
+    for widget in scrollable_frame.winfo_children():
+        widget.destroy()
+    
+    if isinstance(detections, str):
+        # Error message
+        Label(scrollable_frame, text=detections, font=("Arial", 11), 
+              bg="white", fg="#e74c3c", justify="left", wraplength=250).pack(fill="x", padx=10, pady=10)
+        total_shapes_label.config(text="Total Shapes: 0")
+        avg_confidence_label.config(text="Average Confidence: 0%")
+        return
+    
+    if not detections:
+        Label(scrollable_frame, text="No shapes detected", font=("Arial", 11), 
+              bg="white", fg="#666", justify="left").pack(fill="x", padx=10, pady=10)
+        total_shapes_label.config(text="Total Shapes: 0")
+        avg_confidence_label.config(text="Average Confidence: 0%")
+        return
+    
+    # Calculate statistics
+    total_shapes = len(detections)
+    avg_confidence = sum(conf for _, _, _, _, _, conf in detections) / total_shapes
+    
+    total_shapes_label.config(text=f"Total Shapes: {total_shapes}")
+    avg_confidence_label.config(text=f"Average Confidence: {avg_confidence:.1f}%")
+    
+    # Group shapes by type
+    shape_counts = {}
+    for _, _, _, _, shape, conf in detections:
+        if shape not in shape_counts:
+            shape_counts[shape] = []
+        shape_counts[shape].append(conf)
+    
+    # Display results by shape type
+    for shape, confidences in shape_counts.items():
+        shape_frame = Frame(scrollable_frame, bg="white", relief="flat", 
+                           highlightthickness=1, highlightbackground="#eee")
+        shape_frame.pack(fill="x", padx=5, pady=5)
+        
+        # Shape header
+        header = Frame(shape_frame, bg="#e8f4f8")
+        header.pack(fill="x")
+        
+        count = len(confidences)
+        avg_conf = sum(confidences) / count
+        Label(header, text=f"{shape.capitalize()} ({count})", font=("Arial", 12, "bold"), 
+              bg="#e8f4f8", fg="#2c3e50").pack(anchor="w", padx=10, pady=5)
+        
+        # Confidence details
+        details = Frame(shape_frame, bg="white")
+        details.pack(fill="x", padx=10, pady=5)
+        
+        Label(details, text=f"Average: {avg_conf:.1f}%", font=("Arial", 10), 
+              bg="white", fg="#555").pack(anchor="w")
+        
+        if count > 1:
+            min_conf = min(confidences)
+            max_conf = max(confidences)
+            Label(details, text=f"Range: {min_conf:.1f}% - {max_conf:.1f}%", font=("Arial", 9), 
+                  bg="white", fg="#777").pack(anchor="w")
+
+def clear_canvas():
+    before_canvas.delete("all")
+    before_canvas.create_text(225, 175, text="Original Image", 
+                             font=("Arial", 14), fill="#999999")
+    
+    after_canvas.delete("all")
+    after_canvas.create_text(225, 175, text="Processed Image", 
+                            font=("Arial", 14), fill="#999999")
+    
+    # Clear results
+    for widget in scrollable_frame.winfo_children():
+        widget.destroy()
+    
+    total_shapes_label.config(text="Total Shapes: 0")
+    avg_confidence_label.config(text="Average Confidence: 0%")
+
+# Initialize with empty canvases
+clear_canvas()
 
 window.mainloop()
