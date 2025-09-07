@@ -112,7 +112,7 @@ def main():
     print(f"R² (curiosity): {r2:.4f}")
 
      # === Save model + encoder ===
-    model_filename = "../../shape_knn_model.pkl"
+    model_filename = "shape_knn_model.pkl"
     joblib.dump({"model": model, "encoder": encoder}, model_filename)
     print(f"\n💾 Model + encoder saved as {model_filename}")
 
