@@ -6,6 +6,7 @@ Shape Classification with KNN + Metrics
 import os
 import cv2
 import numpy as np
+import joblib
 from sklearn.model_selection import train_test_split
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import LabelEncoder
@@ -109,6 +110,11 @@ def main():
     print(f"MAE (curiosity): {mae:.4f}")
     print(f"MSE (curiosity): {mse:.4f}")
     print(f"R² (curiosity): {r2:.4f}")
+
+     # === Save model + encoder ===
+    model_filename = "../../shape_knn_model.pkl"
+    joblib.dump({"model": model, "encoder": encoder}, model_filename)
+    print(f"\n💾 Model + encoder saved as {model_filename}")
 
 if __name__ == "__main__":
     main()
