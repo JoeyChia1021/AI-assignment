@@ -231,7 +231,7 @@ class ShapeApp(QWidget):
             pixmap = QPixmap(file_path)
             if pixmap.width() > self.max_display_width or pixmap.height() > self.max_display_height:
                 pixmap = pixmap.scaled(self.max_display_width, self.max_display_height, Qt.KeepAspectRatio)
-            self.image_label.setFixedSize(pixmap.width()+50, pixmap.height())
+            self.image_label.setFixedSize(pixmap.width(), pixmap.height())
             self.image_label.setPixmap(pixmap)
 
     # ======== Predict ========
